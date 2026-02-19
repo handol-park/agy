@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use std::collections::VecDeque;
 
+pub mod scorecard;
+
 #[derive(Debug, Clone)]
 pub struct Agent {
     pub max_steps: usize,

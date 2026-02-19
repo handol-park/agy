@@ -1,0 +1,28 @@
+{
+  "entries": [
+    {
+      "provider": "Fireworks",
+      "model": "gpt-oss-120b",
+      "quality_pct": 88.2,
+      "p50_ms": 410.0,
+      "p95_ms": 980.0,
+      "error_pct": 1.1,
+      "timeout_pct": 0.4,
+      "cost_per_1k_tasks_usd": 14.5,
+      "availability_pct": 99.93,
+      "score": 85.9
+    },
+    {
+      "provider": "Groq",
+      "model": "llama-3.3-70b-versatile",
+      "quality_pct": 84.7,
+      "p50_ms": 210.0,
+      "p95_ms": 620.0,
+      "error_pct": 0.8,
+      "timeout_pct": 0.2,
+      "cost_per_1k_tasks_usd": 19.8,
+      "availability_pct": 99.93,
+      "score": 83.4
+    }
+  ]
+}
