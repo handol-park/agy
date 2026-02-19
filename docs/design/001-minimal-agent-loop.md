@@ -89,9 +89,13 @@ The runtime uses `tokio` for async execution.
 
 ## Runtime Configuration
 For real model calls in CLI:
-- `OPENAI_API_KEY` (required)
-- `OPENAI_BASE_URL` (optional, default `https://api.openai.com/v1`)
-- `OPENAI_MODEL` (optional, default `gpt-4o-mini`)
+- `LLM_PROVIDER` (optional: `openai` default, or `glm5`)
+- `LLM_API_KEY` (preferred key variable)
+- `LLM_BASE_URL` and `LLM_MODEL` (optional overrides)
+
+Aliases kept for convenience:
+- `OPENAI_API_KEY` / `OPENAI_BASE_URL` / `OPENAI_MODEL`
+- `GLM_API_KEY` / `GLM_BASE_URL` / `GLM_MODEL`
 
 ## Known Limits and Next Extensions
 Current loop supports one-question constraint gathering and one synthesis step. It still has no tool calls and no typed memory model.

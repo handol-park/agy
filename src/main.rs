@@ -106,12 +106,36 @@ fn read_line(prompt: &str) -> io::Result<String> {
 }
 
 fn select_model() -> (Box<dyn LanguageModel>, String) {
-    let api_key = env::var("OPENAI_API_KEY").ok();
+    let provider = env::var("LLM_PROVIDER")
+        .unwrap_or_else(|_| "openai".to_string())
+        .to_lowercase();
+    let (default_base_url, default_model) = match provider.as_str() {
+        "glm5" | "glm-5" | "zai" | "zhipu" => (
+            "https://api.z.ai/api/paas/v4".to_string(),
+            "glm-5".to_string(),
+        ),
+        _ => (
+            "https://api.openai.com/v1".to_string(),
+            "gpt-4o-mini".to_string(),
+        ),
+    };
+
+    let api_key = env::var("LLM_API_KEY")
+        .ok()
+        .or_else(|| env::var("OPENAI_API_KEY").ok())
+        .or_else(|| env::var("GLM_API_KEY").ok());
 
     if let Some(api_key) = api_key {
-        let base_url =
-            env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-        let model = env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string());
+        let base_url = env::var("LLM_BASE_URL")
+            .ok()
+            .or_else(|| env::var("OPENAI_BASE_URL").ok())
+            .or_else(|| env::var("GLM_BASE_URL").ok())
+            .unwrap_or(default_base_url);
+        let model = env::var("LLM_MODEL")
+            .ok()
+            .or_else(|| env::var("OPENAI_MODEL").ok())
+            .or_else(|| env::var("GLM_MODEL").ok())
+            .unwrap_or(default_model);
 
         let llm = OpenAiCompatModel {
             client: Client::new(),
@@ -120,12 +144,15 @@ fn select_model() -> (Box<dyn LanguageModel>, String) {
             model: model.clone(),
         };
 
-        return (Box::new(llm), format!("openai-compatible ({model})"));
+        return (
+            Box::new(llm),
+            format!("openai-compatible provider={provider} model={model}"),
+        );
     }
 
     (
         Box::new(TemplateModel),
-        "template fallback (set OPENAI_API_KEY to use real LLM)".to_string(),
+        "template fallback (set LLM_API_KEY or OPENAI_API_KEY/GLM_API_KEY)".to_string(),
     )
 }
 

@@ -41,7 +41,9 @@ pub fn load_entries_from_file(path: &str) -> Result<Vec<ScorecardEntry>, String>
 
 pub fn render_markdown_table(entries: &[ScorecardEntry]) -> String {
     let mut out = String::new();
-    out.push_str("| Provider | Model | Quality % | P50 ms | P95 ms | Error % | Timeout % | Cost / 1k tasks ($) | Availability % | Score |\n");
+    out.push_str(
+        "| Provider | Model | Qual % | P50 | P95 | Err % | TO % | Cost/1k $ | Uptime % | Score |\n",
+    );
     out.push_str("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
 
     for e in entries {

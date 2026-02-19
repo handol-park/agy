@@ -32,11 +32,20 @@ Fallback implementation:
 
 ## Runtime Configuration
 CLI selects model mode by environment variables:
-- `OPENAI_API_KEY`: if set, use `OpenAiCompatModel`
-- `OPENAI_BASE_URL`: optional, default `https://api.openai.com/v1`
-- `OPENAI_MODEL`: optional, default `gpt-4o-mini`
+- `LLM_PROVIDER`: optional, `openai` (default) or `glm5`
+- `LLM_API_KEY`: preferred API key variable
+- `LLM_BASE_URL`: optional override
+- `LLM_MODEL`: optional override
 
-If `OPENAI_API_KEY` is missing, CLI uses `TemplateModel`.
+Back-compat aliases are also supported:
+- `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
+- `GLM_API_KEY`, `GLM_BASE_URL`, `GLM_MODEL`
+
+Provider defaults:
+- `openai` -> base URL `https://api.openai.com/v1`, model `gpt-4o-mini`
+- `glm5` -> base URL `https://api.z.ai/api/paas/v4`, model `glm-5`
+
+If no API key is found, CLI uses `TemplateModel`.
 
 ## Error Handling
 Adapter wraps and returns string errors for:
