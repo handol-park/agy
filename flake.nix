@@ -21,11 +21,13 @@
             clippy
             rustfmt
             rust-analyzer
+            rustPlatform.rustLibSrc
           ];
 
           shellHook = ''
             export RUST_BACKTRACE=1
             export CARGO_HOME="$PWD/.cargo"
+            export RUST_SRC_PATH="${pkgs.rustPlatform.rustLibSrc}"
             echo "Rust dev shell ready. Run: cargo check && cargo test"
           '';
         };
