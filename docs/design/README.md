@@ -8,6 +8,7 @@ Rules:
 - `NNN` is a zero-padded sequence (`001`, `002`, ...)
 - `short-kebab-title` is concise and specific
 - one major design topic per file
+- include an `Agent Definition at Stage NNN` section in each stage doc
 
 Examples:
 - `docs/design/000-curriculum-roadmap.md`

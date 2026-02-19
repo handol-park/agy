@@ -3,6 +3,15 @@
 ## Purpose
 `agy` is a minimal Rust agent prototype focused on learning core agent-loop mechanics with a pluggable model path.
 
+## Agent Definition at Stage 001
+At this stage, an agent is a bounded control loop that:
+- receives a goal
+- iterates through `plan -> act -> observe`
+- records traces for each step
+- terminates with either a final answer or max-step stop
+
+It is intentionally minimal: one interaction to gather a key constraint, then one synthesis step.
+
 The current design implements:
 - a bounded loop (`max_steps`)
 - explicit planning and action selection

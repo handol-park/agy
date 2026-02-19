@@ -8,6 +8,20 @@ Build a small, testable, and extensible agent framework with:
 - deterministic test coverage
 - versioned design docs for each major architecture decision
 
+## What Is an Agent? (Evolving Definition)
+In this repository, an "agent" is defined by capabilities added over time, not by a fixed label.
+
+- `001`: A bounded control loop that can reason (`plan`), choose an action (`act`), observe results, and stop.
+- `002`: The same loop with an interchangeable language-model adapter for synthesis.
+- `003`: The loop plus typed memory state across steps.
+- `004`: The loop plus a structured action space.
+- `005`: The loop plus a tool execution interface and registry.
+- `006`: The loop plus a planner module decoupled from runtime.
+- `007`: The loop plus prompt/policy constraints for safe behavior.
+- `008`: The loop plus production runtime controls (timeouts, retries, cancellation, telemetry).
+- `009`: The loop plus measurable task performance and regression evaluation.
+- `010`: A packaged, documented developer-facing framework.
+
 ## Stage Plan
 
 ## 000. Curriculum and Tracking

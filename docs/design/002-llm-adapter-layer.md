@@ -3,6 +3,13 @@
 ## Goal
 Enable early real-model demos without coupling agent core logic to a specific provider SDK or HTTP shape.
 
+## Agent Definition at Stage 002
+At this stage, an agent is:
+- the Stage `001` bounded loop
+- plus an interchangeable language-model interface used for synthesis
+
+The key change is not "having AI," but separating agent control flow from model provider implementation.
+
 ## Current Design
 The adapter boundary lives in `src/lib.rs`:
 - `LanguageModel` trait with `synthesize(goal, constraint) -> Result<String, String>`
