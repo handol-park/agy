@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
@@ -24,19 +25,22 @@ pub enum RunState {
     MaxStepsReached,
 }
 
+#[async_trait]
 pub trait Environment {
-    fn ask(&mut self, prompt: &str) -> String;
+    async fn ask(&mut self, prompt: &str) -> String;
 }
 
+#[async_trait]
 pub trait LanguageModel {
-    fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String>;
+    async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String>;
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TemplateModel;
 
+#[async_trait]
 impl LanguageModel for TemplateModel {
-    fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
+    async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
         Ok(format!(
             "Plan for '{goal}': prioritize '{constraint}', keep solution minimal, and validate with one test."
         ))
@@ -48,11 +52,11 @@ impl Agent {
         Self { max_steps }
     }
 
-    pub fn run<E: Environment>(&self, goal: &str, env: &mut E) -> (RunState, Vec<StepTrace>) {
-        self.run_with_model(goal, env, &TemplateModel)
+    pub async fn run<E: Environment>(&self, goal: &str, env: &mut E) -> (RunState, Vec<StepTrace>) {
+        self.run_with_model(goal, env, &TemplateModel).await
     }
 
-    pub fn run_with_model<E: Environment>(
+    pub async fn run_with_model<E: Environment>(
         &self,
         goal: &str,
         env: &mut E,
@@ -64,7 +68,7 @@ impl Agent {
 
         for step in 1..=self.max_steps {
             let thought = self.plan(step, &last_observation, &transcript);
-            let action = self.act(step, goal, &transcript, model);
+            let action = self.act(step, goal, &transcript, model).await;
 
             traces.push(StepTrace {
                 step,
@@ -74,7 +78,7 @@ impl Agent {
 
             match action {
                 Action::AskUser(prompt) => {
-                    let observation = env.ask(&prompt);
+                    let observation = env.ask(&prompt).await;
                     transcript.push_back(observation.clone());
                     last_observation = observation;
                 }
@@ -97,7 +101,7 @@ impl Agent {
         format!("Use latest observation: {last_observation}")
     }
 
-    fn act(
+    async fn act(
         &self,
         step: usize,
         goal: &str,
@@ -111,7 +115,7 @@ impl Agent {
         }
 
         if let Some(constraint) = transcript.back() {
-            return match model.synthesize(goal, constraint) {
+            return match model.synthesize(goal, constraint).await {
                 Ok(message) => Action::Finish(message),
                 Err(err) => Action::Finish(format!(
                     "Model call failed ({err}). Fallback: prioritize '{constraint}'."
@@ -139,34 +143,39 @@ mod tests {
         }
     }
 
+    #[async_trait]
     impl Environment for FakeEnv {
-        fn ask(&mut self, _prompt: &str) -> String {
+        async fn ask(&mut self, _prompt: &str) -> String {
             self.replies.pop_front().unwrap_or_default()
         }
     }
 
     struct FakeModelOk;
 
+    #[async_trait]
     impl LanguageModel for FakeModelOk {
-        fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
+        async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
             Ok(format!("SYNTHESIZED: {goal} | {constraint}"))
         }
     }
 
     struct FakeModelErr;
 
+    #[async_trait]
     impl LanguageModel for FakeModelErr {
-        fn synthesize(&self, _goal: &str, _constraint: &str) -> Result<String, String> {
+        async fn synthesize(&self, _goal: &str, _constraint: &str) -> Result<String, String> {
             Err("offline".to_string())
         }
     }
 
-    #[test]
-    fn finishes_after_collecting_constraint_with_model_output() {
+    #[tokio::test]
+    async fn finishes_after_collecting_constraint_with_model_output() {
         let agent = Agent::new(3);
         let mut env = FakeEnv::new(&["low latency"]);
 
-        let (state, traces) = agent.run_with_model("build an agent loop", &mut env, &FakeModelOk);
+        let (state, traces) = agent
+            .run_with_model("build an agent loop", &mut env, &FakeModelOk)
+            .await;
 
         assert_eq!(traces.len(), 2);
         assert!(matches!(traces[0].action, Action::AskUser(_)));
@@ -176,12 +185,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn falls_back_when_model_fails() {
+    #[tokio::test]
+    async fn falls_back_when_model_fails() {
         let agent = Agent::new(3);
         let mut env = FakeEnv::new(&["deterministic output"]);
 
-        let (state, _traces) = agent.run_with_model("test", &mut env, &FakeModelErr);
+        let (state, _traces) = agent.run_with_model("test", &mut env, &FakeModelErr).await;
 
         assert_eq!(
             state,
@@ -192,12 +201,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn returns_max_steps_if_budget_too_small() {
+    #[tokio::test]
+    async fn returns_max_steps_if_budget_too_small() {
         let agent = Agent::new(1);
         let mut env = FakeEnv::new(&["anything"]);
 
-        let (state, traces) = agent.run("test", &mut env);
+        let (state, traces) = agent.run("test", &mut env).await;
 
         assert_eq!(state, RunState::MaxStepsReached);
         assert_eq!(traces.len(), 1);

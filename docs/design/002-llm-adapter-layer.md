@@ -12,11 +12,11 @@ The key change is not "having AI," but separating agent control flow from model 
 
 ## Current Design
 The adapter boundary lives in `src/lib.rs`:
-- `LanguageModel` trait with `synthesize(goal, constraint) -> Result<String, String>`
+- async `LanguageModel` trait with `synthesize(goal, constraint) -> Result<String, String>`
 - agent loop depends on this trait, not on HTTP clients
 
 Provider-specific implementation currently lives in `src/main.rs`:
-- `OpenAiCompatModel` uses blocking `reqwest`
+- `OpenAiCompatModel` uses async `reqwest::Client`
 - calls `POST {base_url}/chat/completions`
 - parses first choice content and returns text
 
@@ -28,6 +28,7 @@ Fallback implementation:
 - Keeps `src/lib.rs` testable and deterministic.
 - Allows fast provider swaps by changing only adapter code.
 - Preserves one stable interface (`LanguageModel`) for future planners.
+- Aligns with async-first runtime so model/tool I/O can scale without blocking the loop.
 
 ## Runtime Configuration
 CLI selects model mode by environment variables:
@@ -52,6 +53,7 @@ Core tests use fake model implementations:
 - error case (`FakeModelErr`)
 
 No network is required for default test runs.
+Core async tests run with `#[tokio::test]`.
 
 ## Next Improvements
 - move provider adapter into `src/model/` module

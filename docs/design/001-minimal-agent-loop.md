@@ -14,6 +14,7 @@ It is intentionally minimal: one interaction to gather a key constraint, then on
 
 The current design implements:
 - a bounded loop (`max_steps`)
+- asynchronous execution as the default runtime model
 - explicit planning and action selection
 - environment abstraction for interaction
 - language-model abstraction with fallback behavior
@@ -36,15 +37,15 @@ The code is split into:
   - `Finished(String)`
   - `MaxStepsReached`
 - `Environment` trait: boundary for external interaction.
-  - `fn ask(&mut self, prompt: &str) -> String`
+  - `async fn ask(&mut self, prompt: &str) -> String`
 - `LanguageModel` trait: synthesis boundary.
-  - `fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String>`
+  - `async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String>`
 - `TemplateModel`: deterministic local fallback model.
 
 These traits are the key decoupling points: the core loop does not depend on CLI or direct HTTP code.
 
 ## Agent Loop
-`Agent::run_with_model(goal, env, model)` executes:
+`Agent::run_with_model(goal, env, model).await` executes:
 1. Initialize `transcript`, `last_observation`, and `traces`.
 2. For each step up to `max_steps`:
    - `plan(...)` generates a thought string.
@@ -60,19 +61,19 @@ Current policy is intentionally simple:
 
 ## CLI Adapter (`src/main.rs`)
 `StdioEnv` implements `Environment` by delegating to `read_line`.
-`OpenAiCompatModel` implements `LanguageModel` using OpenAI-compatible `/chat/completions`.
+`OpenAiCompatModel` implements `LanguageModel` using async `reqwest` against OpenAI-compatible `/chat/completions`.
 `main`:
 - prompts for goal
 - creates `Agent::new(3)`
 - selects model source:
   - real model when `OPENAI_API_KEY` is set
   - `TemplateModel` fallback otherwise
-- runs loop with `run_with_model(...)`
+- runs loop with `run_with_model(...).await`
 - prints all `StepTrace` entries
 - prints final state
 
 ## Testing
-`src/lib.rs` includes unit tests with `FakeEnv` and fake model implementations:
+`src/lib.rs` includes async unit tests (`#[tokio::test]`) with `FakeEnv` and fake model implementations:
 - successful finish after collecting one constraint with model synthesis
 - fallback finish when model call fails
 - max-step termination when budget is too small
@@ -83,6 +84,8 @@ This validates loop control flow without CLI I/O.
 `flake.nix` provides a Rust dev shell with:
 - `cargo`, `rustc`, `clippy`, `rustfmt`, `rust-analyzer`
 - `rustPlatform.rustLibSrc` and `RUST_SRC_PATH` for rust-analyzer stdlib indexing
+
+The runtime uses `tokio` for async execution.
 
 ## Runtime Configuration
 For real model calls in CLI:

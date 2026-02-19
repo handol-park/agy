@@ -1,13 +1,15 @@
 use agy::{Action, Agent, Environment, LanguageModel, RunState, TemplateModel};
-use reqwest::blocking::Client;
+use async_trait::async_trait;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::{self, Write};
 
 struct StdioEnv;
 
+#[async_trait]
 impl Environment for StdioEnv {
-    fn ask(&mut self, prompt: &str) -> String {
+    async fn ask(&mut self, prompt: &str) -> String {
         read_line(prompt).unwrap_or_default()
     }
 }
@@ -42,8 +44,9 @@ struct Choice {
     message: ChatMessage,
 }
 
+#[async_trait]
 impl LanguageModel for OpenAiCompatModel {
-    fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
+    async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
         let system = "You are a concise agent planner. Return one short actionable answer.";
         let user =
             format!("Goal: {goal}\nConstraint: {constraint}\nReturn a minimal 2-3 sentence plan.");
@@ -70,11 +73,15 @@ impl LanguageModel for OpenAiCompatModel {
             .bearer_auth(&self.api_key)
             .json(&req)
             .send()
+            .await
             .map_err(|e| format!("request error: {e}"))?
             .error_for_status()
             .map_err(|e| format!("http error: {e}"))?;
 
-        let body: ChatResponse = resp.json().map_err(|e| format!("decode error: {e}"))?;
+        let body: ChatResponse = resp
+            .json()
+            .await
+            .map_err(|e| format!("decode error: {e}"))?;
         let content = body
             .choices
             .first()
@@ -122,7 +129,8 @@ fn select_model() -> (Box<dyn LanguageModel>, String) {
     )
 }
 
-fn main() -> io::Result<()> {
+#[tokio::main]
+async fn main() -> io::Result<()> {
     let goal = read_line("Enter agent goal: ")?;
 
     let agent = Agent::new(3);
@@ -130,7 +138,7 @@ fn main() -> io::Result<()> {
     let (model, mode) = select_model();
     println!("\nModel mode: {mode}");
 
-    let (state, traces) = agent.run_with_model(&goal, &mut env, model.as_ref());
+    let (state, traces) = agent.run_with_model(&goal, &mut env, model.as_ref()).await;
 
     for trace in traces {
         println!("\n[step {}] thought: {}", trace.step, trace.thought);
