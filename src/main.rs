@@ -1,7 +1,6 @@
+use agy::model::OpenAiCompatModel;
 use agy::{Action, Agent, Environment, LanguageModel, RunState, TemplateModel};
 use async_trait::async_trait;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
 use std::env;
 use std::io::{self, Write};
 
@@ -11,88 +10,6 @@ struct StdioEnv;
 impl Environment for StdioEnv {
     async fn ask(&mut self, prompt: &str) -> String {
         read_line(prompt).unwrap_or_default()
-    }
-}
-
-struct OpenAiCompatModel {
-    client: Client,
-    base_url: String,
-    api_key: String,
-    model: String,
-}
-
-#[derive(Serialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    temperature: f32,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<Choice>,
-}
-
-#[derive(Deserialize)]
-struct Choice {
-    message: ChatMessage,
-}
-
-#[async_trait]
-impl LanguageModel for OpenAiCompatModel {
-    async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
-        let system = "You are a concise agent planner. Return one short actionable answer.";
-        let user =
-            format!("Goal: {goal}\nConstraint: {constraint}\nReturn a minimal 2-3 sentence plan.");
-
-        let req = ChatRequest {
-            model: self.model.clone(),
-            messages: vec![
-                ChatMessage {
-                    role: "system".to_string(),
-                    content: system.to_string(),
-                },
-                ChatMessage {
-                    role: "user".to_string(),
-                    content: user,
-                },
-            ],
-            temperature: 0.2,
-        };
-
-        let endpoint = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let resp = self
-            .client
-            .post(endpoint)
-            .bearer_auth(&self.api_key)
-            .json(&req)
-            .send()
-            .await
-            .map_err(|e| format!("request error: {e}"))?
-            .error_for_status()
-            .map_err(|e| format!("http error: {e}"))?;
-
-        let body: ChatResponse = resp
-            .json()
-            .await
-            .map_err(|e| format!("decode error: {e}"))?;
-        let content = body
-            .choices
-            .first()
-            .map(|c| c.message.content.trim().to_string())
-            .ok_or_else(|| "no choices in model response".to_string())?;
-
-        if content.is_empty() {
-            return Err("empty model response".to_string());
-        }
-
-        Ok(content)
     }
 }
 
@@ -137,12 +54,7 @@ fn select_model() -> (Box<dyn LanguageModel>, String) {
             .or_else(|| env::var("GLM_MODEL").ok())
             .unwrap_or(default_model);
 
-        let llm = OpenAiCompatModel {
-            client: Client::new(),
-            base_url,
-            api_key,
-            model: model.clone(),
-        };
+        let llm = OpenAiCompatModel::new(base_url, api_key, model.clone());
 
         return (
             Box::new(llm),
@@ -170,11 +82,20 @@ async fn main() -> io::Result<()> {
     for trace in traces {
         println!("\n[step {}] thought: {}", trace.step, trace.thought);
         match trace.action {
-            Action::AskUser(prompt) => {
-                println!("[step {}] action: ask_user ({prompt})", trace.step)
+            Action::AskUser(payload) => {
+                println!(
+                    "[step {}] action: ask_user ({})",
+                    trace.step, payload.prompt
+                )
             }
-            Action::Finish(message) => {
-                println!("[step {}] action: finish ({message})", trace.step)
+            Action::Finish(payload) => {
+                println!("[step {}] action: finish ({})", trace.step, payload.message)
+            }
+            Action::CallTool(payload) => {
+                println!(
+                    "[step {}] action: call_tool (name={} input={})",
+                    trace.step, payload.tool_name, payload.input_json
+                )
             }
         }
     }

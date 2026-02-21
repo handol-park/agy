@@ -73,7 +73,7 @@ In this repository, an "agent" is defined by capabilities added over time.
 - replay artifact can reproduce final memory and run outcome
 
 ## 004. Action Model
-- Status: [ ] planned
+- Status: [x] implemented
 - Design doc: `docs/design/004-action-model.md`
 - Scope:
 - expand to structured actions: `AskUser`, `Finish`, `CallTool`, `Reflect` (optional)

@@ -1,22 +1,23 @@
 use async_trait::async_trait;
 
+pub mod action;
 pub mod memory;
+pub mod model;
 pub mod scorecard;
 
 use crate::memory::Memory;
+
+pub use crate::action::{
+    Action, ActionError, ActionResult, ActionValidationError, AskUserAction, CallToolAction,
+    FinishAction,
+};
 
 #[derive(Debug, Clone)]
 pub struct Agent {
     pub max_steps: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Action {
-    AskUser(String),
-    Finish(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StepTrace {
     pub step: usize,
     pub thought: String,
@@ -27,12 +28,6 @@ pub struct StepTrace {
 pub enum RunState {
     Finished(String),
     MaxStepsReached,
-}
-
-#[derive(Debug, Clone)]
-enum ActionOutcome {
-    Observation(String),
-    Finished(String),
 }
 
 #[async_trait]
@@ -85,11 +80,23 @@ impl Agent {
                 action: action.clone(),
             });
 
-            let outcome = self.act(&action, env).await;
-            self.observe(step, &mut memory, &outcome);
+            let result = self.act(&action, env).await;
+            self.observe(step, &mut memory, &result);
 
-            if let ActionOutcome::Finished(message) = outcome {
-                return (RunState::Finished(message), traces);
+            match result {
+                ActionResult::Finalized { message } => {
+                    return (RunState::Finished(message), traces);
+                }
+                ActionResult::ActionError { error } => {
+                    return (
+                        RunState::Finished(format!(
+                            "Action execution failed: {}",
+                            self.describe_action_error(&error)
+                        )),
+                        traces,
+                    );
+                }
+                ActionResult::UserObservation { .. } | ActionResult::ToolOutput { .. } => {}
             }
         }
 
@@ -111,18 +118,22 @@ impl Agent {
         if step == 1 {
             return (
                 "Understand goal and request one critical constraint.".to_string(),
-                Action::AskUser(format!(
-                    "I am working on '{goal}'. What single constraint matters most? "
-                )),
+                Action::AskUser(AskUserAction {
+                    prompt: format!(
+                        "I am working on '{goal}'. What single constraint matters most? "
+                    ),
+                }),
             );
         }
 
         if let Some(constraint) = memory.latest_constraint() {
             let action = match model.synthesize(goal, constraint).await {
-                Ok(message) => Action::Finish(message),
-                Err(err) => Action::Finish(format!(
-                    "Model call failed ({err}). Fallback: prioritize '{constraint}'."
-                )),
+                Ok(message) => Action::Finish(FinishAction { message }),
+                Err(err) => Action::Finish(FinishAction {
+                    message: format!(
+                        "Model call failed ({err}). Fallback: prioritize '{constraint}'."
+                    ),
+                }),
             };
             return (
                 "Use the language model to synthesize a concrete answer.".to_string(),
@@ -132,20 +143,45 @@ impl Agent {
 
         (
             format!("Use latest perception '{perceived}'."),
-            Action::Finish("No constraint provided. Returning minimal plan.".to_string()),
+            Action::Finish(FinishAction {
+                message: "No constraint provided. Returning minimal plan.".to_string(),
+            }),
         )
     }
 
-    async fn act<E: Environment>(&self, action: &Action, env: &mut E) -> ActionOutcome {
+    async fn act<E: Environment>(&self, action: &Action, env: &mut E) -> ActionResult {
+        if let Err(err) = action.validate() {
+            return ActionResult::ActionError {
+                error: ActionError::Validation(err),
+            };
+        }
+
         match action {
-            Action::AskUser(prompt) => ActionOutcome::Observation(env.ask(prompt).await),
-            Action::Finish(message) => ActionOutcome::Finished(message.clone()),
+            Action::AskUser(payload) => ActionResult::UserObservation {
+                text: env.ask(&payload.prompt).await,
+            },
+            Action::Finish(payload) => ActionResult::Finalized {
+                message: payload.message.clone(),
+            },
+            Action::CallTool(CallToolAction { tool_name, .. }) => ActionResult::ActionError {
+                error: ActionError::Unsupported(format!(
+                    "tool '{tool_name}' is not available in stage 004"
+                )),
+            },
         }
     }
 
-    fn observe(&self, step: usize, memory: &mut Memory, outcome: &ActionOutcome) {
-        if let ActionOutcome::Observation(observation) = outcome {
-            memory.record_user_reply(step, observation.clone());
+    fn observe(&self, step: usize, memory: &mut Memory, result: &ActionResult) {
+        if let ActionResult::UserObservation { text } = result {
+            memory.record_user_reply(step, text.clone());
+        }
+    }
+
+    fn describe_action_error(&self, error: &ActionError) -> String {
+        match error {
+            ActionError::Validation(err) => format!("validation error: {err:?}"),
+            ActionError::Unsupported(msg) => format!("unsupported action: {msg}"),
+            ActionError::Runtime(msg) => format!("runtime error: {msg}"),
         }
     }
 }
@@ -153,6 +189,7 @@ impl Agent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::collections::VecDeque;
 
     struct FakeEnv {
@@ -249,6 +286,45 @@ mod tests {
         assert_eq!(
             state,
             RunState::Finished("No constraint provided. Returning minimal plan.".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn returns_validation_error_for_invalid_action() {
+        let agent = Agent::new(3);
+        let mut env = FakeEnv::new(&["unused"]);
+        let invalid = Action::AskUser(AskUserAction {
+            prompt: "   ".to_string(),
+        });
+
+        let result = agent.act(&invalid, &mut env).await;
+
+        assert_eq!(
+            result,
+            ActionResult::ActionError {
+                error: ActionError::Validation(ActionValidationError::EmptyPrompt)
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn returns_unsupported_for_call_tool_until_stage_005() {
+        let agent = Agent::new(3);
+        let mut env = FakeEnv::new(&["unused"]);
+        let action = Action::CallTool(CallToolAction {
+            tool_name: "calculator".to_string(),
+            input_json: json!({"expression": "1+1"}),
+        });
+
+        let result = agent.act(&action, &mut env).await;
+
+        assert_eq!(
+            result,
+            ActionResult::ActionError {
+                error: ActionError::Unsupported(
+                    "tool 'calculator' is not available in stage 004".to_string()
+                )
+            }
         );
     }
 }
