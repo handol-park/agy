@@ -4,18 +4,21 @@
 `agy` is a minimal Rust agent prototype focused on learning core agent-loop mechanics with a pluggable model path.
 
 ## Agent Definition at Stage 001
-At this stage, an agent is a bounded control loop that:
-- receives a goal
-- iterates through `plan -> act -> observe`
-- records traces for each step
-- terminates with either a final answer or max-step stop
+At this stage, an agent is a goal-directed closed-loop system that:
+- perceives observations as outcomes of deliberate actions
+- plans the next action from current state
+- executes that action to influence the environment
+- repeats until a stop condition is met
 
 It is intentionally minimal: one interaction to gather a key constraint, then one synthesis step.
+
+In this repository's `001` implementation, that definition is instantiated as a bounded
+`perceive -> plan -> act -> observe` loop with per-step traces and a max-step termination.
 
 The current design implements:
 - a bounded loop (`max_steps`)
 - asynchronous execution as the default runtime model
-- explicit planning and action selection
+- explicit perceive/plan/act/observe phases
 - environment abstraction for interaction
 - language-model abstraction with fallback behavior
 - deterministic tests over the loop behavior
@@ -36,6 +39,12 @@ The code is split into:
 - `RunState`: terminal status.
   - `Finished(String)`
   - `MaxStepsReached`
+- `AgentMemory` (internal): loop state with:
+  - transcript (constraint history)
+  - last observation
+- `ActionOutcome` (internal):
+  - `Observation(String)`
+  - `Finished(String)`
 - `Environment` trait: boundary for external interaction.
   - `async fn ask(&mut self, prompt: &str) -> String`
 - `LanguageModel` trait: synthesis boundary.
@@ -46,13 +55,14 @@ These traits are the key decoupling points: the core loop does not depend on CLI
 
 ## Agent Loop
 `Agent::run_with_model(goal, env, model).await` executes:
-1. Initialize `transcript`, `last_observation`, and `traces`.
+1. Initialize `memory` and `traces`.
 2. For each step up to `max_steps`:
-   - `plan(...)` generates a thought string.
-   - `act(...)` chooses `AskUser` or `Finish` (uses `model` for synthesis after a constraint is collected).
+   - `perceive(...)` reads the latest observation from memory.
+   - `plan(...)` generates a thought string and chosen action from perception + memory.
    - trace is recorded.
-   - if `AskUser`, read an observation via `env.ask(...)` and append to transcript.
-   - if `Finish`, return immediately with `RunState::Finished`.
+   - `act(...)` executes the chosen action and returns outcome.
+   - `observe(...)` updates memory from that outcome.
+   - if outcome is `Finished`, return immediately with `RunState::Finished`.
 3. If no finish action occurs, return `RunState::MaxStepsReached`.
 
 Current policy is intentionally simple:
@@ -98,7 +108,7 @@ Aliases kept for convenience:
 - `GLM_API_KEY` / `GLM_BASE_URL` / `GLM_MODEL`
 
 ## Known Limits and Next Extensions
-Current loop supports one-question constraint gathering and one synthesis step. It still has no tool calls and no typed memory model.
+Current loop supports one-question constraint gathering and one synthesis step. Memory is still an internal minimal struct, not yet a typed, serializable memory subsystem.
 
 Natural next steps:
 - add `Action::CallTool` and a tool execution layer

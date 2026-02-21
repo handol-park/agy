@@ -37,6 +37,13 @@ Use 4-space indentation and UTF-8 text files. Prefer explicit names:
 
 Prefer small traits and explicit error types (`thiserror`/`anyhow` by layer). Run `fmt` and `clippy` before every PR.
 
+## Design Principle: Simplicity First
+Treat unnecessary complexity as tech debt.
+
+- Prefer the simplest design that satisfies the current stage.
+- Avoid speculative abstractions that are not yet required.
+- Add a new type or layer only when it removes real duplication or enables necessary tests/behavior.
+
 ## Testing Guidelines
 Keep unit tests near modules (`mod tests`) and cross-module integration tests in `tests/`. For each framework component (planner, memory, tools), add:
 

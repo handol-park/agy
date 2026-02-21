@@ -27,6 +27,18 @@ pub enum RunState {
     MaxStepsReached,
 }
 
+#[derive(Debug, Clone)]
+struct AgentMemory {
+    transcript: VecDeque<String>,
+    last_observation: String,
+}
+
+#[derive(Debug, Clone)]
+enum ActionOutcome {
+    Observation(String),
+    Finished(String),
+}
+
 #[async_trait]
 pub trait Environment {
     async fn ask(&mut self, prompt: &str) -> String;
@@ -64,13 +76,15 @@ impl Agent {
         env: &mut E,
         model: &dyn LanguageModel,
     ) -> (RunState, Vec<StepTrace>) {
-        let mut transcript: VecDeque<String> = VecDeque::new();
-        let mut last_observation = format!("Goal: {goal}");
+        let mut memory = AgentMemory {
+            transcript: VecDeque::new(),
+            last_observation: format!("Goal: {goal}"),
+        };
         let mut traces: Vec<StepTrace> = Vec::new();
 
         for step in 1..=self.max_steps {
-            let thought = self.plan(step, &last_observation, &transcript);
-            let action = self.act(step, goal, &transcript, model).await;
+            let perceived = self.perceive(&memory);
+            let (thought, action) = self.plan(step, goal, perceived, &memory, model).await;
 
             traces.push(StepTrace {
                 step,
@@ -78,55 +92,73 @@ impl Agent {
                 action: action.clone(),
             });
 
-            match action {
-                Action::AskUser(prompt) => {
-                    let observation = env.ask(&prompt).await;
-                    transcript.push_back(observation.clone());
-                    last_observation = observation;
-                }
-                Action::Finish(message) => return (RunState::Finished(message), traces),
+            let outcome = self.act(&action, env).await;
+            self.observe(&mut memory, &outcome);
+
+            if let ActionOutcome::Finished(message) = outcome {
+                return (RunState::Finished(message), traces);
             }
         }
 
         (RunState::MaxStepsReached, traces)
     }
 
-    fn plan(&self, step: usize, last_observation: &str, transcript: &VecDeque<String>) -> String {
-        if step == 1 {
-            return "Understand goal and request one critical constraint.".to_string();
-        }
-
-        if !transcript.is_empty() {
-            return "Use the language model to synthesize a concrete answer.".to_string();
-        }
-
-        format!("Use latest observation: {last_observation}")
+    fn perceive<'a>(&self, memory: &'a AgentMemory) -> &'a str {
+        &memory.last_observation
     }
 
-    async fn act(
+    async fn plan(
         &self,
         step: usize,
         goal: &str,
-        transcript: &VecDeque<String>,
+        perceived: &str,
+        memory: &AgentMemory,
         model: &dyn LanguageModel,
-    ) -> Action {
+    ) -> (String, Action) {
         if step == 1 {
-            return Action::AskUser(format!(
-                "I am working on '{goal}'. What single constraint matters most? "
-            ));
-        }
-
-        if let Some(constraint) = transcript.back() {
-            return match model.synthesize(goal, constraint).await {
-                Ok(message) => Action::Finish(message),
-                Err(err) => Action::Finish(format!(
-                    "Model call failed ({err}). Fallback: prioritize '{constraint}'."
+            return (
+                "Understand goal and request one critical constraint.".to_string(),
+                Action::AskUser(format!(
+                    "I am working on '{goal}'. What single constraint matters most? "
                 )),
-            };
+            );
         }
 
-        Action::Finish("No constraint provided. Returning minimal plan.".to_string())
+        if !memory.transcript.is_empty() {
+            if let Some(constraint) = memory.transcript.back() {
+                let action = match model.synthesize(goal, constraint).await {
+                    Ok(message) => Action::Finish(message),
+                    Err(err) => Action::Finish(format!(
+                        "Model call failed ({err}). Fallback: prioritize '{constraint}'."
+                    )),
+                };
+                return (
+                    "Use the language model to synthesize a concrete answer.".to_string(),
+                    action,
+                );
+            }
+        }
+
+        (
+            format!("Use latest perception '{perceived}'."),
+            Action::Finish("No constraint provided. Returning minimal plan.".to_string()),
+        )
     }
+
+    async fn act<E: Environment>(&self, action: &Action, env: &mut E) -> ActionOutcome {
+        match action {
+            Action::AskUser(prompt) => ActionOutcome::Observation(env.ask(prompt).await),
+            Action::Finish(message) => ActionOutcome::Finished(message.clone()),
+        }
+    }
+
+    fn observe(&self, memory: &mut AgentMemory, outcome: &ActionOutcome) {
+        if let ActionOutcome::Observation(observation) = outcome {
+            memory.last_observation = observation.clone();
+            memory.transcript.push_back(observation.clone());
+        }
+    }
+
 }
 
 #[cfg(test)]
