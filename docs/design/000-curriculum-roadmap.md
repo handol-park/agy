@@ -54,7 +54,7 @@ In this repository, an "agent" is defined by capabilities added over time.
 - `010` depends on stable APIs and docs from all prior stages.
 
 ## 003. Typed Memory Model
-- Status: [ ] planned
+- Status: [x] implemented
 - Design doc: `docs/design/003-memory-model.md`
 - Scope:
 - replace raw transcript strings with typed memory structs

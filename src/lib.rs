@@ -1,7 +1,9 @@
 use async_trait::async_trait;
-use std::collections::VecDeque;
 
+pub mod memory;
 pub mod scorecard;
+
+use crate::memory::Memory;
 
 #[derive(Debug, Clone)]
 pub struct Agent {
@@ -25,12 +27,6 @@ pub struct StepTrace {
 pub enum RunState {
     Finished(String),
     MaxStepsReached,
-}
-
-#[derive(Debug, Clone)]
-struct AgentMemory {
-    transcript: VecDeque<String>,
-    last_observation: String,
 }
 
 #[derive(Debug, Clone)]
@@ -76,10 +72,7 @@ impl Agent {
         env: &mut E,
         model: &dyn LanguageModel,
     ) -> (RunState, Vec<StepTrace>) {
-        let mut memory = AgentMemory {
-            transcript: VecDeque::new(),
-            last_observation: format!("Goal: {goal}"),
-        };
+        let mut memory = Memory::new(goal);
         let mut traces: Vec<StepTrace> = Vec::new();
 
         for step in 1..=self.max_steps {
@@ -93,7 +86,7 @@ impl Agent {
             });
 
             let outcome = self.act(&action, env).await;
-            self.observe(&mut memory, &outcome);
+            self.observe(step, &mut memory, &outcome);
 
             if let ActionOutcome::Finished(message) = outcome {
                 return (RunState::Finished(message), traces);
@@ -103,8 +96,8 @@ impl Agent {
         (RunState::MaxStepsReached, traces)
     }
 
-    fn perceive<'a>(&self, memory: &'a AgentMemory) -> &'a str {
-        &memory.last_observation
+    fn perceive<'a>(&self, memory: &'a Memory) -> &'a str {
+        memory.latest_observation_text().unwrap_or_default()
     }
 
     async fn plan(
@@ -112,7 +105,7 @@ impl Agent {
         step: usize,
         goal: &str,
         perceived: &str,
-        memory: &AgentMemory,
+        memory: &Memory,
         model: &dyn LanguageModel,
     ) -> (String, Action) {
         if step == 1 {
@@ -124,19 +117,17 @@ impl Agent {
             );
         }
 
-        if !memory.transcript.is_empty() {
-            if let Some(constraint) = memory.transcript.back() {
-                let action = match model.synthesize(goal, constraint).await {
-                    Ok(message) => Action::Finish(message),
-                    Err(err) => Action::Finish(format!(
-                        "Model call failed ({err}). Fallback: prioritize '{constraint}'."
-                    )),
-                };
-                return (
-                    "Use the language model to synthesize a concrete answer.".to_string(),
-                    action,
-                );
-            }
+        if let Some(constraint) = memory.latest_constraint() {
+            let action = match model.synthesize(goal, constraint).await {
+                Ok(message) => Action::Finish(message),
+                Err(err) => Action::Finish(format!(
+                    "Model call failed ({err}). Fallback: prioritize '{constraint}'."
+                )),
+            };
+            return (
+                "Use the language model to synthesize a concrete answer.".to_string(),
+                action,
+            );
         }
 
         (
@@ -152,18 +143,17 @@ impl Agent {
         }
     }
 
-    fn observe(&self, memory: &mut AgentMemory, outcome: &ActionOutcome) {
+    fn observe(&self, step: usize, memory: &mut Memory, outcome: &ActionOutcome) {
         if let ActionOutcome::Observation(observation) = outcome {
-            memory.last_observation = observation.clone();
-            memory.transcript.push_back(observation.clone());
+            memory.record_user_reply(step, observation.clone());
         }
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
 
     struct FakeEnv {
         replies: VecDeque<String>,
@@ -244,5 +234,21 @@ mod tests {
 
         assert_eq!(state, RunState::MaxStepsReached);
         assert_eq!(traces.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn skips_synthesis_when_constraint_reply_is_empty() {
+        let agent = Agent::new(3);
+        let mut env = FakeEnv::new(&["   "]);
+
+        let (state, traces) = agent
+            .run_with_model("build an agent loop", &mut env, &FakeModelOk)
+            .await;
+
+        assert_eq!(traces.len(), 2);
+        assert_eq!(
+            state,
+            RunState::Finished("No constraint provided. Returning minimal plan.".to_string())
+        );
     }
 }
