@@ -16,3 +16,4 @@ Current docs:
 - `docs/design/002-llm-adapter-layer.md`
 - `docs/design/003-memory-model.md`
 - `docs/design/004-action-model.md`
+- `docs/design/005-tool-interface-and-registry.md`
