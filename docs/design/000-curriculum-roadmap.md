@@ -13,7 +13,7 @@ Build an agent framework with:
 ## What Is an Agent? (Evolving Definition)
 In this repository, an "agent" is defined by capabilities added over time.
 
-- `001`: goal-directed closed loop (perceive, decide, act, feedback, stop)
+- `001`: goal-directed closed loop (perceive, plan, act, observe, stop)
 - `002`: interchangeable language-model adapter for synthesis
 - `003`: typed memory state across steps
 - `004`: structured and validated action space
