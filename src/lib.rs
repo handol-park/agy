@@ -3,16 +3,19 @@ use async_trait::async_trait;
 pub mod action;
 pub mod memory;
 pub mod model;
+pub mod planner;
 pub mod scorecard;
 pub mod tools;
 
 use crate::memory::Memory;
+use crate::planner::{ModelPlanner, RulePlanner};
 use crate::tools::{default_registry, ToolRegistry};
 
 pub use crate::action::{
     Action, ActionError, ActionResult, ActionValidationError, AskUserAction, CallToolAction,
     FinishAction,
 };
+pub use crate::planner::{PlanContext, PlanOutput, Planner};
 
 #[derive(Debug, Clone)]
 pub struct Agent {
@@ -38,19 +41,11 @@ pub trait Environment {
 }
 
 #[async_trait]
-pub trait LanguageModel {
+pub trait LanguageModel: Send + Sync {
     async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String>;
-}
 
-#[derive(Debug, Clone, Copy)]
-pub struct TemplateModel;
-
-#[async_trait]
-impl LanguageModel for TemplateModel {
-    async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
-        Ok(format!(
-            "Plan for '{goal}': prioritize '{constraint}', keep solution minimal, and validate with one test."
-        ))
+    async fn complete(&self, system: &str, user: &str) -> Result<String, String> {
+        self.synthesize(system, user).await
     }
 }
 
@@ -60,7 +55,7 @@ impl Agent {
     }
 
     pub async fn run<E: Environment>(&self, goal: &str, env: &mut E) -> (RunState, Vec<StepTrace>) {
-        self.run_with_model(goal, env, &TemplateModel).await
+        self.run_with_planner(goal, env, &RulePlanner).await
     }
 
     pub async fn run_with_model<E: Environment>(
@@ -69,21 +64,36 @@ impl Agent {
         env: &mut E,
         model: &dyn LanguageModel,
     ) -> (RunState, Vec<StepTrace>) {
+        let planner = ModelPlanner::new(model);
+        self.run_with_planner(goal, env, &planner).await
+    }
+
+    pub async fn run_with_planner<E: Environment>(
+        &self,
+        goal: &str,
+        env: &mut E,
+        planner: &dyn Planner,
+    ) -> (RunState, Vec<StepTrace>) {
         let mut memory = Memory::new(goal);
         let tools = default_registry();
         let mut traces: Vec<StepTrace> = Vec::new();
 
         for step in 1..=self.max_steps {
-            let perceived = self.perceive(&memory);
-            let (thought, action) = self.plan(step, goal, perceived, &memory, model).await;
+            let ctx = PlanContext {
+                step,
+                max_steps: self.max_steps,
+                memory: &memory,
+                available_tools: tools.list_tools(),
+            };
+            let output = planner.plan_next(&ctx).await;
 
             traces.push(StepTrace {
                 step,
-                thought,
-                action: action.clone(),
+                thought: output.thought,
+                action: output.action.clone(),
             });
 
-            let result = self.act(&action, env, &tools).await;
+            let result = self.act(&output.action, env, &tools).await;
             self.observe(step, &mut memory, &result);
 
             match result {
@@ -104,52 +114,6 @@ impl Agent {
         }
 
         (RunState::MaxStepsReached, traces)
-    }
-
-    fn perceive<'a>(&self, memory: &'a Memory) -> &'a str {
-        memory.latest_observation_text().unwrap_or_default()
-    }
-
-    async fn plan(
-        &self,
-        step: usize,
-        goal: &str,
-        perceived: &str,
-        memory: &Memory,
-        model: &dyn LanguageModel,
-    ) -> (String, Action) {
-        if step == 1 {
-            return (
-                "Understand goal and request one critical constraint.".to_string(),
-                Action::AskUser(AskUserAction {
-                    prompt: format!(
-                        "I am working on '{goal}'. What single constraint matters most? "
-                    ),
-                }),
-            );
-        }
-
-        if let Some(constraint) = memory.latest_constraint() {
-            let action = match model.synthesize(goal, constraint).await {
-                Ok(message) => Action::Finish(FinishAction { message }),
-                Err(err) => Action::Finish(FinishAction {
-                    message: format!(
-                        "Model call failed ({err}). Fallback: prioritize '{constraint}'."
-                    ),
-                }),
-            };
-            return (
-                "Use the language model to synthesize a concrete answer.".to_string(),
-                action,
-            );
-        }
-
-        (
-            format!("Use latest perception '{perceived}'."),
-            Action::Finish(FinishAction {
-                message: "No constraint provided. Returning minimal plan.".to_string(),
-            }),
-        )
     }
 
     async fn act<E: Environment>(
@@ -239,8 +203,21 @@ mod tests {
 
     #[async_trait]
     impl LanguageModel for FakeModelOk {
-        async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
-            Ok(format!("SYNTHESIZED: {goal} | {constraint}"))
+        async fn synthesize(&self, _goal: &str, _constraint: &str) -> Result<String, String> {
+            unreachable!("ModelPlanner uses complete(), not synthesize()");
+        }
+
+        async fn complete(&self, _system: &str, user: &str) -> Result<String, String> {
+            // ModelPlanner includes "Step: N/M" in the user prompt.
+            // Return ask_user on step 1, finish on later steps.
+            if user.contains("Step: 1/") {
+                Ok(r#"{"thought":"gather info","action_type":"ask_user","prompt":"What matters most?"}"#.to_string())
+            } else {
+                Ok(
+                    r#"{"thought":"synthesized","action_type":"finish","message":"model output"}"#
+                        .to_string(),
+                )
+            }
         }
     }
 
@@ -254,7 +231,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn finishes_after_collecting_constraint_with_model_output() {
+    async fn model_planner_asks_then_finishes() {
         let agent = Agent::new(3);
         let mut env = FakeEnv::new(&["low latency"]);
 
@@ -264,26 +241,20 @@ mod tests {
 
         assert_eq!(traces.len(), 2);
         assert!(matches!(traces[0].action, Action::AskUser(_)));
-        assert_eq!(
-            state,
-            RunState::Finished("SYNTHESIZED: build an agent loop | low latency".to_string())
-        );
+        assert_eq!(state, RunState::Finished("model output".to_string()));
     }
 
     #[tokio::test]
-    async fn falls_back_when_model_fails() {
+    async fn model_planner_handles_model_error() {
         let agent = Agent::new(3);
         let mut env = FakeEnv::new(&["deterministic output"]);
 
         let (state, _traces) = agent.run_with_model("test", &mut env, &FakeModelErr).await;
 
-        assert_eq!(
-            state,
-            RunState::Finished(
-                "Model call failed (offline). Fallback: prioritize 'deterministic output'."
-                    .to_string()
-            )
-        );
+        match state {
+            RunState::Finished(msg) => assert!(msg.contains("offline")),
+            other => panic!("expected Finished, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -298,19 +269,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skips_synthesis_when_constraint_reply_is_empty() {
+    async fn model_planner_falls_back_on_non_json_response() {
+        struct PlainTextModel;
+
+        #[async_trait]
+        impl LanguageModel for PlainTextModel {
+            async fn synthesize(&self, _g: &str, _c: &str) -> Result<String, String> {
+                unreachable!();
+            }
+
+            async fn complete(&self, _system: &str, _user: &str) -> Result<String, String> {
+                Ok("just plain text".to_string())
+            }
+        }
+
         let agent = Agent::new(3);
-        let mut env = FakeEnv::new(&["   "]);
+        let mut env = FakeEnv::new(&["constraint"]);
 
         let (state, traces) = agent
-            .run_with_model("build an agent loop", &mut env, &FakeModelOk)
+            .run_with_model("goal", &mut env, &PlainTextModel)
             .await;
 
-        assert_eq!(traces.len(), 2);
-        assert_eq!(
-            state,
-            RunState::Finished("No constraint provided. Returning minimal plan.".to_string())
-        );
+        // Step 1: plain text → fallback Finish. Loop ends after 1 step.
+        assert_eq!(traces.len(), 1);
+        assert_eq!(state, RunState::Finished("just plain text".to_string()));
     }
 
     #[tokio::test]
@@ -370,6 +352,46 @@ mod tests {
             ActionResult::ActionError {
                 error: ActionError::Runtime("ToolNotFound(\"missing\")".to_string())
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn run_with_planner_uses_custom_planner() {
+        struct FakePlanner;
+
+        #[async_trait]
+        impl Planner for FakePlanner {
+            async fn plan_next(&self, ctx: &PlanContext<'_>) -> PlanOutput {
+                if ctx.step == 1 {
+                    PlanOutput {
+                        thought: "ask".to_string(),
+                        action: Action::AskUser(AskUserAction {
+                            prompt: "Tell me something.".to_string(),
+                        }),
+                    }
+                } else {
+                    PlanOutput {
+                        thought: "done".to_string(),
+                        action: Action::Finish(FinishAction {
+                            message: format!("Custom plan for '{}'", ctx.memory.goal),
+                        }),
+                    }
+                }
+            }
+        }
+
+        let agent = Agent::new(3);
+        let mut env = FakeEnv::new(&["user input"]);
+
+        let (state, traces) = agent
+            .run_with_planner("my goal", &mut env, &FakePlanner)
+            .await;
+
+        assert_eq!(traces.len(), 2);
+        assert!(matches!(traces[0].action, Action::AskUser(_)));
+        assert_eq!(
+            state,
+            RunState::Finished("Custom plan for 'my goal'".to_string())
         );
     }
 }

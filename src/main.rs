@@ -1,5 +1,5 @@
 use agy::model::OpenAiCompatModel;
-use agy::{Action, Agent, Environment, LanguageModel, RunState, TemplateModel};
+use agy::{Action, Agent, Environment, RunState};
 use async_trait::async_trait;
 use std::env;
 use std::io::{self, Write};
@@ -22,7 +22,7 @@ fn read_line(prompt: &str) -> io::Result<String> {
     Ok(input.trim().to_string())
 }
 
-fn select_model() -> (Box<dyn LanguageModel>, String) {
+fn select_model() -> Option<(Box<dyn agy::LanguageModel>, String)> {
     let provider = env::var("LLM_PROVIDER")
         .unwrap_or_else(|_| "openai".to_string())
         .to_lowercase();
@@ -40,32 +40,25 @@ fn select_model() -> (Box<dyn LanguageModel>, String) {
     let api_key = env::var("LLM_API_KEY")
         .ok()
         .or_else(|| env::var("OPENAI_API_KEY").ok())
-        .or_else(|| env::var("GLM_API_KEY").ok());
+        .or_else(|| env::var("GLM_API_KEY").ok())?;
 
-    if let Some(api_key) = api_key {
-        let base_url = env::var("LLM_BASE_URL")
-            .ok()
-            .or_else(|| env::var("OPENAI_BASE_URL").ok())
-            .or_else(|| env::var("GLM_BASE_URL").ok())
-            .unwrap_or(default_base_url);
-        let model = env::var("LLM_MODEL")
-            .ok()
-            .or_else(|| env::var("OPENAI_MODEL").ok())
-            .or_else(|| env::var("GLM_MODEL").ok())
-            .unwrap_or(default_model);
+    let base_url = env::var("LLM_BASE_URL")
+        .ok()
+        .or_else(|| env::var("OPENAI_BASE_URL").ok())
+        .or_else(|| env::var("GLM_BASE_URL").ok())
+        .unwrap_or(default_base_url);
+    let model = env::var("LLM_MODEL")
+        .ok()
+        .or_else(|| env::var("OPENAI_MODEL").ok())
+        .or_else(|| env::var("GLM_MODEL").ok())
+        .unwrap_or(default_model);
 
-        let llm = OpenAiCompatModel::new(base_url, api_key, model.clone());
+    let llm = OpenAiCompatModel::new(base_url, api_key, model.clone());
 
-        return (
-            Box::new(llm),
-            format!("openai-compatible provider={provider} model={model}"),
-        );
-    }
-
-    (
-        Box::new(TemplateModel),
-        "template fallback (set LLM_API_KEY or OPENAI_API_KEY/GLM_API_KEY)".to_string(),
-    )
+    Some((
+        Box::new(llm),
+        format!("openai-compatible provider={provider} model={model}"),
+    ))
 }
 
 #[tokio::main]
@@ -74,10 +67,14 @@ async fn main() -> io::Result<()> {
 
     let agent = Agent::new(3);
     let mut env = StdioEnv;
-    let (model, mode) = select_model();
-    println!("\nModel mode: {mode}");
 
-    let (state, traces) = agent.run_with_model(&goal, &mut env, model.as_ref()).await;
+    let (state, traces) = if let Some((model, mode)) = select_model() {
+        println!("\nModel mode: {mode}");
+        agent.run_with_model(&goal, &mut env, model.as_ref()).await
+    } else {
+        println!("\nModel mode: rule-based (set LLM_API_KEY for model-driven planning)");
+        agent.run(&goal, &mut env).await
+    };
 
     for trace in traces {
         println!("\n[step {}] thought: {}", trace.step, trace.thought);

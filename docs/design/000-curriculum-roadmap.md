@@ -111,7 +111,7 @@ In this repository, an "agent" is defined by capabilities added over time.
 - no direct tool-specific branching in agent core loop
 
 ## 006. Planner Architecture
-- Status: [ ] planned
+- Status: [x] implemented
 - Design doc: `docs/design/006-planner-architecture.md`
 - Scope:
 - move decision logic out of `Agent` runtime into planner module

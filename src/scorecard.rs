@@ -85,9 +85,9 @@ pub fn update_doc_table(doc: &str, table: &str) -> Result<String, String> {
 
     let mut out = String::new();
     out.push_str(prefix);
-    out.push_str("\n");
+    out.push('\n');
     out.push_str(table.trim_end());
-    out.push_str("\n");
+    out.push('\n');
     out.push_str(suffix);
 
     Ok(out)

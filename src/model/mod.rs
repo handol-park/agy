@@ -43,15 +43,8 @@ impl OpenAiCompatModel {
             model,
         }
     }
-}
 
-#[async_trait]
-impl LanguageModel for OpenAiCompatModel {
-    async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
-        let system = "You are a concise agent planner. Return one short actionable answer.";
-        let user =
-            format!("Goal: {goal}\nConstraint: {constraint}\nReturn a minimal 2-3 sentence plan.");
-
+    async fn send_chat(&self, system: &str, user: &str) -> Result<String, String> {
         let req = ChatRequest {
             model: self.model.clone(),
             messages: vec![
@@ -61,7 +54,7 @@ impl LanguageModel for OpenAiCompatModel {
                 },
                 ChatMessage {
                     role: "user".to_string(),
-                    content: user,
+                    content: user.to_string(),
                 },
             ],
             temperature: 0.2,
@@ -94,5 +87,19 @@ impl LanguageModel for OpenAiCompatModel {
         }
 
         Ok(content)
+    }
+}
+
+#[async_trait]
+impl LanguageModel for OpenAiCompatModel {
+    async fn synthesize(&self, goal: &str, constraint: &str) -> Result<String, String> {
+        let system = "You are a concise agent planner. Return one short actionable answer.";
+        let user =
+            format!("Goal: {goal}\nConstraint: {constraint}\nReturn a minimal 2-3 sentence plan.");
+        self.send_chat(system, &user).await
+    }
+
+    async fn complete(&self, system: &str, user: &str) -> Result<String, String> {
+        self.send_chat(system, user).await
     }
 }

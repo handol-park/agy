@@ -20,6 +20,12 @@ pub struct ToolRegistry {
     tools: HashMap<String, Box<dyn Tool>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
+}
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self::default()
@@ -40,6 +46,19 @@ impl ToolRegistry {
             .get(name)
             .ok_or_else(|| ToolError::ToolNotFound(name.to_string()))?;
         tool.execute(input_json)
+    }
+
+    pub fn list_tools(&self) -> Vec<ToolInfo> {
+        let mut tools: Vec<ToolInfo> = self
+            .tools
+            .values()
+            .map(|t| ToolInfo {
+                name: t.name().to_string(),
+                description: t.description().to_string(),
+            })
+            .collect();
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+        tools
     }
 }
 
@@ -262,5 +281,29 @@ mod tests {
             .execute("calculator", &json!({"expression":"1+"}))
             .expect_err("invalid expression should fail");
         assert_eq!(err, ToolError::InvalidInput("expected number".to_string()));
+    }
+
+    #[test]
+    fn list_tools_returns_registered_tools() {
+        let registry = default_registry();
+        let tools = registry.list_tools();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name, "calculator");
+        assert_eq!(
+            tools[0].description,
+            "Evaluate a basic arithmetic expression"
+        );
+        assert_eq!(tools[1].name, "text_search");
+        assert_eq!(
+            tools[1].description,
+            "Count substring matches inside a text"
+        );
+    }
+
+    #[test]
+    fn list_tools_empty_for_empty_registry() {
+        let registry = ToolRegistry::new();
+        let tools = registry.list_tools();
+        assert!(tools.is_empty());
     }
 }

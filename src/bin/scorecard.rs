@@ -39,13 +39,13 @@ fn run() -> Result<(), String> {
     let table = render_markdown_table(&entries);
 
     if let Some(path) = output_path.as_ref() {
-        fs::write(&path, &table).map_err(|e| format!("failed writing '{path}': {e}"))?;
+        fs::write(path, &table).map_err(|e| format!("failed writing '{path}': {e}"))?;
     }
 
     if let Some(path) = update_doc_path.as_ref() {
-        let doc = fs::read_to_string(&path).map_err(|e| format!("failed reading '{path}': {e}"))?;
+        let doc = fs::read_to_string(path).map_err(|e| format!("failed reading '{path}': {e}"))?;
         let updated = update_doc_table(&doc, &table)?;
-        fs::write(&path, updated).map_err(|e| format!("failed writing '{path}': {e}"))?;
+        fs::write(path, updated).map_err(|e| format!("failed writing '{path}': {e}"))?;
     }
 
     if output_path.is_none() && update_doc_path.is_none() {
