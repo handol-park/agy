@@ -4,8 +4,10 @@ pub mod action;
 pub mod memory;
 pub mod model;
 pub mod scorecard;
+pub mod tools;
 
 use crate::memory::Memory;
+use crate::tools::{default_registry, ToolRegistry};
 
 pub use crate::action::{
     Action, ActionError, ActionResult, ActionValidationError, AskUserAction, CallToolAction,
@@ -68,6 +70,7 @@ impl Agent {
         model: &dyn LanguageModel,
     ) -> (RunState, Vec<StepTrace>) {
         let mut memory = Memory::new(goal);
+        let tools = default_registry();
         let mut traces: Vec<StepTrace> = Vec::new();
 
         for step in 1..=self.max_steps {
@@ -80,7 +83,7 @@ impl Agent {
                 action: action.clone(),
             });
 
-            let result = self.act(&action, env).await;
+            let result = self.act(&action, env, &tools).await;
             self.observe(step, &mut memory, &result);
 
             match result {
@@ -149,7 +152,12 @@ impl Agent {
         )
     }
 
-    async fn act<E: Environment>(&self, action: &Action, env: &mut E) -> ActionResult {
+    async fn act<E: Environment>(
+        &self,
+        action: &Action,
+        env: &mut E,
+        tools: &ToolRegistry,
+    ) -> ActionResult {
         if let Err(err) = action.validate() {
             return ActionResult::ActionError {
                 error: ActionError::Validation(err),
@@ -163,17 +171,33 @@ impl Agent {
             Action::Finish(payload) => ActionResult::Finalized {
                 message: payload.message.clone(),
             },
-            Action::CallTool(CallToolAction { tool_name, .. }) => ActionResult::ActionError {
-                error: ActionError::Unsupported(format!(
-                    "tool '{tool_name}' is not available in stage 004"
-                )),
+            Action::CallTool(CallToolAction {
+                tool_name,
+                input_json,
+            }) => match tools.execute(tool_name, input_json) {
+                Ok(output_json) => ActionResult::ToolOutput {
+                    tool_name: tool_name.clone(),
+                    output_json,
+                },
+                Err(err) => ActionResult::ActionError {
+                    error: ActionError::Runtime(format!("{err:?}")),
+                },
             },
         }
     }
 
     fn observe(&self, step: usize, memory: &mut Memory, result: &ActionResult) {
-        if let ActionResult::UserObservation { text } = result {
-            memory.record_user_reply(step, text.clone());
+        match result {
+            ActionResult::UserObservation { text } => {
+                memory.record_user_reply(step, text.clone());
+            }
+            ActionResult::ToolOutput {
+                tool_name,
+                output_json,
+            } => {
+                memory.record_tool_result(step, tool_name.clone(), output_json.clone());
+            }
+            ActionResult::Finalized { .. } | ActionResult::ActionError { .. } => {}
         }
     }
 
@@ -293,11 +317,12 @@ mod tests {
     async fn returns_validation_error_for_invalid_action() {
         let agent = Agent::new(3);
         let mut env = FakeEnv::new(&["unused"]);
+        let tools = default_registry();
         let invalid = Action::AskUser(AskUserAction {
             prompt: "   ".to_string(),
         });
 
-        let result = agent.act(&invalid, &mut env).await;
+        let result = agent.act(&invalid, &mut env, &tools).await;
 
         assert_eq!(
             result,
@@ -308,22 +333,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_unsupported_for_call_tool_until_stage_005() {
+    async fn executes_call_tool_via_registry() {
         let agent = Agent::new(3);
         let mut env = FakeEnv::new(&["unused"]);
+        let tools = default_registry();
         let action = Action::CallTool(CallToolAction {
             tool_name: "calculator".to_string(),
             input_json: json!({"expression": "1+1"}),
         });
 
-        let result = agent.act(&action, &mut env).await;
+        let result = agent.act(&action, &mut env, &tools).await;
+
+        assert_eq!(
+            result,
+            ActionResult::ToolOutput {
+                tool_name: "calculator".to_string(),
+                output_json: json!({"result":2.0})
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn returns_runtime_error_for_unknown_tool() {
+        let agent = Agent::new(3);
+        let mut env = FakeEnv::new(&["unused"]);
+        let action = Action::CallTool(CallToolAction {
+            tool_name: "missing".to_string(),
+            input_json: json!({}),
+        });
+
+        let tools = default_registry();
+        let result = agent.act(&action, &mut env, &tools).await;
 
         assert_eq!(
             result,
             ActionResult::ActionError {
-                error: ActionError::Unsupported(
-                    "tool 'calculator' is not available in stage 004".to_string()
-                )
+                error: ActionError::Runtime("ToolNotFound(\"missing\")".to_string())
             }
         );
     }

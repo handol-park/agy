@@ -1,27 +1,36 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 pub const MEMORY_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Memory {
     pub goal: String,
     pub observations: Vec<ObservationRecord>,
     pub constraint_history: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ObservationRecord {
     pub step: usize,
     pub observation: Observation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Observation {
-    GoalSeed { text: String },
-    UserReply { text: String },
+    GoalSeed {
+        text: String,
+    },
+    UserReply {
+        text: String,
+    },
+    ToolResult {
+        tool_name: String,
+        output_json: Value,
+    },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemorySnapshot {
     pub schema_version: u32,
     pub step: usize,
@@ -61,6 +70,7 @@ impl Memory {
         match self.latest_observation() {
             Some(Observation::GoalSeed { text }) => Some(text.as_str()),
             Some(Observation::UserReply { text }) => Some(text.as_str()),
+            Some(Observation::ToolResult { .. }) => Some("[tool_result]"),
             None => None,
         }
     }
@@ -75,6 +85,16 @@ impl Memory {
             step,
             memory: self.clone(),
         }
+    }
+
+    pub fn record_tool_result(&mut self, step: usize, tool_name: String, output_json: Value) {
+        self.observations.push(ObservationRecord {
+            step,
+            observation: Observation::ToolResult {
+                tool_name,
+                output_json,
+            },
+        });
     }
 }
 
@@ -146,5 +166,23 @@ mod tests {
 
         assert_eq!(decoded, snapshot);
         assert_eq!(decoded.schema_version, MEMORY_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn records_tool_result_observation() {
+        let mut memory = Memory::new("x");
+        memory.record_tool_result(
+            1,
+            "calculator".to_string(),
+            serde_json::json!({"result":2.0}),
+        );
+
+        assert_eq!(
+            memory.latest_observation(),
+            Some(&Observation::ToolResult {
+                tool_name: "calculator".to_string(),
+                output_json: serde_json::json!({"result":2.0})
+            })
+        );
     }
 }

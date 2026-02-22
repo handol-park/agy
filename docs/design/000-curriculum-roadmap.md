@@ -92,7 +92,7 @@ In this repository, an "agent" is defined by capabilities added over time.
 - planner output is machine-validated before runtime execution
 
 ## 005. Tool Interface and Registry
-- Status: [ ] planned
+- Status: [x] implemented
 - Design doc: `docs/design/005-tool-interface-and-registry.md`
 - Scope:
 - define generic `Tool` trait and registry lookup
